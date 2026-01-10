@@ -1430,6 +1430,7 @@
     let currentYear = today.getFullYear();
     let currentPage = 'calendar';
     let editingEventId = null;
+    window.currentEditingEventDocId = null;
 
     const monthLabel = document.getElementById('monthLabel');
     const currentYearLabel = document.getElementById('currentYearLabel');
@@ -1612,7 +1613,9 @@
           if (processedEventIds.has(ev.id)) return;
           
           const matchingEvents = events.filter(e => e.id === ev.id);
-          if (matchingEvents.length <= 1) return;
+          // Single-day events should also render a bar so they can be tapped to edit/delete.
+          // (Previously: if (matchingEvents.length <= 1) return;)
+          
           
           processedEventIds.add(ev.id);
           
@@ -1750,12 +1753,13 @@
     }
 
     function openEventModalForDate(date) {
-      editingEventId = null;
+    editingEventId = null;
+    window.currentEditingEventDocId = null;
       const dateKey = formatDateKey(date);
       eventStartDateInput.value = dateKey;
       eventEndDateInput.value = dateKey;
       eventTitleInput.value = '';
-      eventTitleInput.disabled = true;
+      eventTitleInput.disabled = false;
       eventNotesInput.value = '';
       eventCalendarSelect.value = '';
       eventModalTitle.textContent = 'Create Event';
@@ -1764,7 +1768,8 @@
     }
 
     function openEventModalForEdit(event) {
-      editingEventId = events.indexOf(event);
+    editingEventId = events.indexOf(event);
+    window.currentEditingEventDocId = event?.id || null;
       const matchingEvents = events.filter(e => e.id === event.id);
       
       const dates = matchingEvents.map(e => new Date(e.date + 'T00:00:00')).sort((a, b) => a - b);
@@ -1783,13 +1788,22 @@
     }
 
     function openEventModal() {
+  eventModalBackdrop.style.pointerEvents = 'auto';
+
+  eventModalBackdrop.style.display = 'flex';
+
+  eventTitleInput.disabled = false;
+  eventTitleInput.value = '';
+
       openEventModalForDate(today);
     }
 
     function closeEventModal() {
       eventModalBackdrop.style.display = 'none';
       editingEventId = null;
-    }
+    
+  eventModalBackdrop.style.pointerEvents = 'none';
+}
 
     function switchToMonthView() {
       monthViewBtn.classList.add('active');
@@ -1847,7 +1861,18 @@
         renderNotes();
       }
 
-      document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+      
+// Ensure modal backdrop is hidden and non-interactive on load
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const backdrop = typeof eventModalBackdrop !== 'undefined' ? eventModalBackdrop : document.getElementById('eventModalBackdrop');
+    if (backdrop) {
+      backdrop.style.display = 'none';
+      backdrop.style.pointerEvents = 'none';
+    }
+  } catch(e) {}
+});
+document.querySelectorAll('.sidebar-nav-item').forEach(item => {
         item.classList.remove('active');
         if (item.dataset.page === page) item.classList.add('active');
       });
@@ -1866,12 +1891,66 @@
         author.className = 'note-author';
         author.textContent = note.author || 'Anonymous';
 
+        const right = document.createElement('div');
+        right.style.display = 'flex';
+        right.style.alignItems = 'center';
+        right.style.gap = '8px';
+
         const time = document.createElement('div');
         time.className = 'note-time';
         time.textContent = new Date(note.timestamp).toLocaleString();
 
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn-primary-small';
+        editBtn.type = 'button';
+        editBtn.textContent = 'Edit';
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn-danger';
+        delBtn.type = 'button';
+        delBtn.textContent = 'Delete';
+
+        editBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!note.id) return alert('This note cannot be edited (missing id).');
+
+          const newAuthor = prompt('Edit name:', note.author || '');
+          if (newAuthor === null) return;
+          const newContent = prompt('Edit note:', note.content || '');
+          if (newContent === null) return;
+
+          const a = newAuthor.trim();
+          const c = newContent.trim();
+          if (!a || !c) return alert('Name and note cannot be empty.');
+
+          try {
+            const { doc, updateDoc } = window.fs;
+            await updateDoc(doc(window.db, 'notes', note.id), { author: a, text: c });
+          } catch (err) {
+            console.error('Failed to update note:', err);
+            alert('Failed to edit note.');
+          }
+        });
+
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!note.id) return alert('This note cannot be deleted (missing id).');
+          if (!confirm('Delete this note?')) return;
+
+          try {
+            const { doc, deleteDoc } = window.fs;
+            await deleteDoc(doc(window.db, 'notes', note.id));
+          } catch (err) {
+            console.error('Failed to delete note:', err);
+            alert('Failed to delete note.');
+          }
+        });
+
         header.appendChild(author);
-        header.appendChild(time);
+        right.appendChild(time);
+        right.appendChild(editBtn);
+        right.appendChild(delBtn);
+        header.appendChild(right);
 
         const content = document.createElement('div');
         content.className = 'note-content';
@@ -1925,7 +2004,10 @@
     newEventBtn.addEventListener('click', openEventModal);
     cancelEventBtn.addEventListener('click', closeEventModal);
 
-    saveEventBtn.addEventListener('click', () => {
+    
+// ===== DISABLED legacy local-only handlers (Firebase is source of truth) =====
+if (false) {
+saveEventBtn.addEventListener('click', () => {
       const calendar = eventCalendarSelect.value.trim();
       const title = eventTitleInput.value.trim();
       const startDateVal = eventStartDateInput.value;
@@ -2126,7 +2208,7 @@
         eventTitleInput.value = selectedCalendar;
         eventTitleInput.focus();
       } else if (!selectedCalendar) {
-        eventTitleInput.disabled = true;
+        eventTitleInput.disabled = false;
         eventTitleInput.value = '';
       }
     });
@@ -2134,7 +2216,23 @@
     renderWeekdaysRow();
     renderMonth(currentYear, currentMonth);
     renderYearOverview(currentYear);
-  </script>
+}
+// ===== end legacy handlers =====
+  
+
+    // Ensure sidebar navigation always works (even if later scripts throw)
+    document.addEventListener('click', (e) => {
+      const navItem = e.target?.closest?.('.sidebar-nav-item');
+      if (!navItem) return;
+      const page = navItem.dataset.page;
+      if (!page) return;
+      try {
+        switchToPage(page);
+      } catch (err) {
+        console.error('Navigation failed', err);
+      }
+    }, true);
+</script>
 
 <script type="module">
   /* --- Firebase configuration (YOUR working config) --- */
@@ -2148,18 +2246,19 @@
   };
 
   /* --- Import Firebase modular SDKs (version aligned with your working page) --- */
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+  import {initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
   import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
   import {
     getFirestore, enableIndexedDbPersistence,
     collection, addDoc, serverTimestamp,
-    query, orderBy, limit, onSnapshot, deleteDoc, doc
-  } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
+    query, orderBy, limit, onSnapshot, deleteDoc, doc, updateDoc} from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
 
   /* --- Init --- */
   const app = initializeApp(FIREBASE_CONFIG);
   const auth = getAuth(app);
   const db = getFirestore(app);
+  window.db = db;
+  window.fs = { doc, updateDoc, deleteDoc };
 
   // Best-effort offline (no UI impact)
   enableIndexedDbPersistence(db).catch(() => { /* continue online-only */ });
@@ -2240,6 +2339,7 @@
       notesQ,
       (snap) => {
         notes = snap.docs.map(d => ({
+          id: d.id,
           author: d.data().author || "Anonymous",
           content: d.data().text || "",
           timestamp: d.data().createdAt?.toDate?.()?.toISOString?.() || new Date().toISOString()
@@ -2300,13 +2400,13 @@
 
   // --- DELETE EVENT: remove Firestore doc by id (uses your `editingEventId`) ---
   deleteEventBtn?.addEventListener("click", async () => {
-    if (typeof editingEventId !== "number" || editingEventId === null) return;
-    const ev = events[editingEventId];
-    if (!ev?.id) return;
+    const editingDocId = window.currentEditingEventDocId;
+    if (!editingDocId) return;
     if (!confirm("Delete this event?")) return;
 
     try {
-      await deleteDoc(doc(db, "events", ev.id));
+      await deleteDoc(doc(db, "events", editingDocId));
+      window.currentEditingEventDocId = null;
       cancelEventBtn?.click();
     } catch (err) {
       console.error("Failed to delete event:", err);
