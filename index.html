@@ -21,7 +21,6 @@
       padding: 0;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
-
     body {
       background: var(--bg);
       color: var(--text-main);
@@ -2136,12 +2135,10 @@
     renderMonth(currentYear, currentMonth);
     renderYearOverview(currentYear);
   </script>
-<!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-<script>
-  const firebaseConfig = {
+<script type="module">
+  /* --- Firebase configuration (YOUR working config) --- */
+  const FIREBASE_CONFIG = {
     apiKey: "AIzaSyBjcE9iI-pKEJ8ZbW4gouNgKMCuizKY1A4",
     authDomain: "the-lodge-9351a.firebaseapp.com",
     projectId: "the-lodge-9351a",
@@ -2150,55 +2147,205 @@
     appId: "1:106944457338:web:f4cf9cbe17e49fa5dfa9c3"
   };
 
-  // Initialize Firebase
-  firebase.initializeApp(firebaseConfig);
+  /* --- Import Firebase modular SDKs (version aligned with your working page) --- */
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
+  import {
+    getFirestore, enableIndexedDbPersistence,
+    collection, addDoc, serverTimestamp,
+    query, orderBy, limit, onSnapshot, deleteDoc, doc
+  } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
 
-  // Firestore
-  const db = firebase.firestore();
-/* ===============================
-   🔁 OVERRIDE LOCAL STORAGE
-   =============================== */
+  /* --- Init --- */
+  const app = initializeApp(FIREBASE_CONFIG);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
 
-// Replace event saving
-window.saveEvents = function(events) {
-  events.forEach(e => {
-    if (!e.id) {
-      db.collection("events").add(e);
+  // Best-effort offline (no UI impact)
+  enableIndexedDbPersistence(db).catch(() => { /* continue online-only */ });
+
+  // --- Hook YOUR existing UI controls (match your IDs) ---
+  const eventCalendarSelect = document.getElementById("eventCalendar");
+  const eventTitleInput     = document.getElementById("eventTitle");
+  const eventStartDateInput = document.getElementById("eventStartDate");
+  const eventEndDateInput   = document.getElementById("eventEndDate");
+  const eventNotesInput     = document.getElementById("eventNotes");
+  const saveEventBtn        = document.getElementById("saveEventBtn");
+  const deleteEventBtn      = document.getElementById("deleteEventBtn");
+  const cancelEventBtn      = document.getElementById("cancelEventBtn");
+
+  // Notes
+  const notesAuthorInput    = document.getElementById("notesAuthor");
+  const notesContentInput   = document.getElementById("notesContent");
+  const notesSubmitBtn      = document.getElementById("notesSubmitBtn");
+  const notesList           = document.getElementById("notesList"); // used by your existing renderNotes()
+
+  // Sign in anonymously
+  await signInAnonymously(auth).catch(err => {
+    console.error("Auth failed. Check Firebase config.", err);
+  });
+
+  onAuthStateChanged(auth, (user) => {
+    if (!user) return;
+    console.log("Signed in anonymously:", user.uid);
+
+    // --- EVENTS: subscribe and mirror Firestore -> your in-memory `events` array ---
+    const eventsQ = query(collection(db, "events"), orderBy("createdAt", "desc"), limit(500));
+    onSnapshot(
+      eventsQ,
+      (snap) => {
+        const all = [];
+        snap.forEach((docSnap) => {
+          const ev = docSnap.data();
+          const evId = docSnap.id;
+
+          // Expect docs to have: calendar, title, startDate, endDate, notes
+          if (!ev.startDate) return;
+          const start = new Date(`${ev.startDate}T00:00:00`);
+          const end   = new Date(`${ev.endDate || ev.startDate}T00:00:00`);
+
+          const title = ev.title || "";
+          const cal   = ev.calendar || "Roro";
+          const notes = ev.notes || "";
+
+          const iter = new Date(start);
+          while (iter <= end) {
+            all.push({
+              title,
+              date: formatDateKey(iter), // same helper as your main script
+              calendar: cal,
+              notes,
+              id: evId // stable Firestore id
+            });
+            iter.setDate(iter.getDate() + 1);
+          }
+        });
+
+        // Replace your global events array and re-render whichever view is visible
+        events = all;
+        if (document.getElementById('yearFullscreen')?.style.display === 'flex') {
+          renderYearFullscreen(yearOverviewYear);
+        } else if (document.getElementById('yearOverview')?.style.display === 'flex') {
+          renderYearOverview(yearOverviewYear);
+        } else {
+          renderMonth(currentYear, currentMonth);
+        }
+      },
+      (err) => console.error("Failed to load events:", err)
+    );
+
+    // --- NOTES: subscribe and render using your existing notes UI ---
+    const notesQ = query(collection(db, "notes"), orderBy("createdAt", "desc"), limit(200));
+    onSnapshot(
+      notesQ,
+      (snap) => {
+        notes = snap.docs.map(d => ({
+          author: d.data().author || "Anonymous",
+          content: d.data().text || "",
+          timestamp: d.data().createdAt?.toDate?.()?.toISOString?.() || new Date().toISOString()
+        }));
+        renderNotes(); // uses your earlier function that builds card UI in notesList
+      },
+      (err) => console.error("Failed to load notes:", err)
+    );
+  });
+
+  // --- SAVE EVENT: write to Firestore (not to local memory) ---
+  saveEventBtn?.addEventListener("click", async () => {
+    const calendar = eventCalendarSelect.value.trim();
+    const title    = eventTitleInput.value.trim();
+    const startVal = eventStartDateInput.value;
+    const endVal   = eventEndDateInput.value || startVal;
+    const notesTxt = eventNotesInput.value.trim();
+
+    if (!calendar) return alert("Please select a calendar.");
+    if (!title)    return alert("Please enter an event title.");
+    if (!startVal) return alert("Please choose a start date.");
+
+    const start = new Date(startVal);
+    const end   = new Date(endVal);
+    if (end < start) return alert("End date cannot be before start date.");
+
+    try {
+      saveEventBtn.disabled = true;
+
+      // If editing an existing event, delete the previous Firestore doc by id
+      if (typeof editingEventId === "number" && editingEventId !== null) {
+        const old = events[editingEventId];
+        if (old?.id) {
+          try { await deleteDoc(doc(db, "events", old.id)); } catch (e) { console.warn("Delete old event failed:", e); }
+        }
+      }
+
+      await addDoc(collection(db, "events"), {
+        calendar,
+        title,
+        startDate: startVal, // YYYY-MM-DD
+        endDate: endVal,     // YYYY-MM-DD
+        notes: notesTxt,
+        createdAt: serverTimestamp()
+      });
+
+      // Clear free-text fields and close modal
+      eventTitleInput.value = "";
+      eventNotesInput.value = "";
+      cancelEventBtn?.click();
+    } catch (err) {
+      console.error("Failed to save event:", err);
+      alert("Failed to save event.");
+    } finally {
+      saveEventBtn.disabled = false;
     }
   });
-};
 
-// Replace event loading
-window.loadEvents = function(callback) {
-  db.collection("events").onSnapshot(snapshot => {
-    const events = [];
-    snapshot.forEach(doc => {
-      events.push({ id: doc.id, ...doc.data() });
-    });
-    callback(events);
+  // --- DELETE EVENT: remove Firestore doc by id (uses your `editingEventId`) ---
+  deleteEventBtn?.addEventListener("click", async () => {
+    if (typeof editingEventId !== "number" || editingEventId === null) return;
+    const ev = events[editingEventId];
+    if (!ev?.id) return;
+    if (!confirm("Delete this event?")) return;
+
+    try {
+      await deleteDoc(doc(db, "events", ev.id));
+      cancelEventBtn?.click();
+    } catch (err) {
+      console.error("Failed to delete event:", err);
+      alert("Failed to delete event.");
+    }
   });
-};
 
-// Replace note saving
-window.saveNote = function(note) {
-  db.collection("notes").add({
-    ...note,
-    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-  });
-};
+  // --- NOTES: save to Firestore ---
+  notesSubmitBtn?.addEventListener("click", async () => {
+    const author  = notesAuthorInput.value.trim();
+    const content = notesContentInput.value.trim();
+    if (!author || !content) return alert("Please enter your name and a note.");
 
-// Replace note loading
-window.loadNotes = function(callback) {
-  db.collection("notes")
-    .orderBy("createdAt", "desc")
-    .onSnapshot(snapshot => {
-      const notes = [];
-      snapshot.forEach(doc => {
-        notes.push({ id: doc.id, ...doc.data() });
+    try {
+      notesSubmitBtn.disabled = true;
+      await addDoc(collection(db, "notes"), {
+        author,
+        text: content,
+        createdAt: serverTimestamp()
       });
-    callback(notes);
+      notesAuthorInput.value = "";
+      notesContentInput.value = "";
+      // onSnapshot will refresh the list
+    } catch (err) {
+      console.error("Failed to add note:", err);
+      alert("Failed to add note.");
+    } finally {
+      notesSubmitBtn.disabled = false;
+    }
   });
-};
+
+  // Helper reused from your main script
+  function formatDateKey(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
 </script>
+
 </body>
 </html>
