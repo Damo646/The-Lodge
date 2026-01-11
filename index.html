@@ -2447,5 +2447,63 @@ saveEventBtn.addEventListener('click', () => {
   }
 </script>
 
+
+
+
+
+<script>
+// ===== Swipe navigation (enabled) =====
+(function(){
+  let touchStartX = null;
+  let touchStartY = null;
+  const H_THRESHOLD = 40;  // min horizontal movement
+  const V_THRESHOLD = 40;  // max vertical movement allowed
+
+  function attachSwipe(el, onLeft, onRight){
+    if (!el) return;
+    el.addEventListener('touchstart', (e)=>{
+      if (e.touches.length === 1){
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+    el.addEventListener('touchend', (e)=>{
+      if (touchStartX === null || touchStartY === null) return;
+      const touchEndX = e.changedTouches[0].clientX;
+      const touchEndY = e.changedTouches[0].clientY;
+      const dx = touchEndX - touchStartX;
+      const dy = touchEndY - touchStartY;
+      if (Math.abs(dx) > H_THRESHOLD && Math.abs(dy) < V_THRESHOLD){
+        if (dx < 0) { onLeft?.(); } else { onRight?.(); }
+      }
+      touchStartX = null; touchStartY = null;
+    }, { passive: true });
+  }
+
+  attachSwipe(document.getElementById('calendarBody'), ()=>{
+    if (document.getElementById('yearOverview')?.style.display !== 'flex') {
+      document.getElementById('nextBtn')?.click();
+    }
+  }, ()=>{
+    if (document.getElementById('yearOverview')?.style.display !== 'flex') {
+      document.getElementById('prevBtn')?.click();
+    }
+  });
+
+  attachSwipe(document.getElementById('yearOverview'), ()=>{
+    document.getElementById('yearEmbeddedNextBtn')?.click();
+  }, ()=>{
+    document.getElementById('yearEmbeddedPrevBtn')?.click();
+  });
+
+  attachSwipe(document.getElementById('yearFullscreen'), ()=>{
+    document.getElementById('yearNextBtn')?.click();
+  }, ()=>{
+    document.getElementById('yearPrevBtn')?.click();
+  });
+})();
+// ===== End swipe navigation =====
+</script>
+
 </body>
 </html>
