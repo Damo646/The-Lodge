@@ -285,7 +285,7 @@
 
     .weekdays div {
       padding: 4px 6px;
-      text-align: right;
+      text-align: center;
     }
 
     .weekdays div:nth-child(6),
@@ -1528,6 +1528,7 @@
     function renderMonth(year, month) {
       monthLabel.textContent = `${monthsNames[month]} ${year}`;
       currentYearLabel.textContent = year;
+      if (typeof renderWeekdaysRow === 'function') renderWeekdaysRow();
       monthGrid.innerHTML = '';
 
       const firstOfMonth = new Date(year, month, 1);
