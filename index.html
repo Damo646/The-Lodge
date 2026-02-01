@@ -1725,7 +1725,15 @@
 
           if (isClickable && dayDate) {
             cell.style.cursor = 'pointer';
-            cell.addEventListener('click', () => openEventModalForDate(dayDate));
+            cell.addEventListener('click', () => {
+              const dateKey = formatDateKey(dayDate);
+              const dayEvents = getEventsForDateKey(dateKey);
+              if (dayEvents.length > 0) {
+                openEventModalForEdit(dayEvents[0]);
+              } else {
+                openEventModalForDate(dayDate);
+              }
+            });
           }
         }
 
