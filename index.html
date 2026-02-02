@@ -1773,6 +1773,8 @@
       eventCalendarSelect.value = '';
       eventModalTitle.textContent = 'Create Event';
       deleteEventBtn.style.display = 'none';
+      eventModalBackdrop.style.pointerEvents = 'auto';
+      eventModalBackdrop.style.pointerEvents = 'auto';
       eventModalBackdrop.style.display = 'flex';
     }
 
@@ -1793,13 +1795,16 @@
       eventNotesInput.value = event.notes || '';
       eventModalTitle.textContent = 'Edit Event';
       deleteEventBtn.style.display = 'block';
+      eventModalBackdrop.style.pointerEvents = 'auto';
+      eventModalBackdrop.style.pointerEvents = 'auto';
       eventModalBackdrop.style.display = 'flex';
     }
 
     function openEventModal() {
   eventModalBackdrop.style.pointerEvents = 'auto';
 
-  eventModalBackdrop.style.display = 'flex';
+  eventModalBackdrop.style.pointerEvents = 'auto';
+      eventModalBackdrop.style.display = 'flex';
 
   eventTitleInput.disabled = false;
   eventTitleInput.value = '';
